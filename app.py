@@ -1,7 +1,6 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-import yt_dlp
-import os
+import requests
 
 app = Flask(__name__)
 CORS(app)
@@ -18,57 +17,58 @@ def extract_video():
     if not video_url:
         return jsonify({"error": "URL missing"}), 400
 
-    # Advanced options to bypass bot detection & JS player challenges
-    ydl_opts = {
-        'quiet': True,
-        'no_warnings': True,
-        'skip_download': True,
-        'extract_flat': False,
-        'format': 'best',
-        'cookiefile': 'cookies.txt' if os.path.exists('cookies.txt') else None,
-        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        # Extra extractor args to handle recent YouTube updates
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['android', 'web']
-            }
-        }
-    }
-
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(video_url, download=False)
+        # High-speed reliable extraction bridge request
+        headers = {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        }
+        payload = {
+            "url": video_url
+        }
+        
+        response = requests.post("https://api.cobalt.tools/api/json", json=payload, headers=headers, timeout=20)
+        res_data = response.json()
+
+        if response.status_code == 200 and res_data.get("status") in ["stream", "redirect", "picker"]:
+            formats = []
             
-            formats_data = []
-            for fmt in info.get('formats', []):
-                if fmt.get('url'):
-                    formats_data.append({
-                        'format_id': fmt.get('format_id'),
-                        'resolution': fmt.get('format_note') or fmt.get('resolution') or f"{fmt.get('height')}p",
-                        'ext': fmt.get('ext'),
-                        'filesize': fmt.get('filesize') or fmt.get('filesize_approx'),
-                        'url': fmt.get('url'),
-                        'has_video': fmt.get('vcodec') != 'none',
-                        'has_audio': fmt.get('acodec') != 'none'
+            # Handle multiple qualities / picker options
+            if res_data.get("status") == "picker":
+                for item in res_data.get("picker", []):
+                    formats.append({
+                        'resolution': item.get('type', 'HD'),
+                        'ext': 'mp4',
+                        'url': item.get('url'),
+                        'has_video': True,
+                        'has_audio': True
                     })
+            elif res_data.get("url"):
+                formats.append({
+                    'resolution': 'HD',
+                    'ext': 'mp4',
+                    'url': res_data.get('url'),
+                    'has_video': True,
+                    'has_audio': True
+                })
 
             result = {
-                'title': info.get('title'),
-                'thumbnail': info.get('thumbnail'),
-                'duration': info.get('duration'),
-                'channel': info.get('uploader'),
-                'views': info.get('view_count'),
-                'description': info.get('description'),
-                'formats': formats_data
+                'title': res_data.get('filename', 'YouTube Video'),
+                'thumbnail': res_data.get('thumbnail', ''),
+                'duration': 0,
+                'channel': 'YouTube',
+                'views': 0,
+                'description': '',
+                'formats': formats
             }
             return jsonify(result), 200
+        else:
+            err_text = res_data.get("text") or res_data.get("error") or "Extraction failed."
+            return jsonify({"error": err_text}), 500
 
     except Exception as e:
-        error_msg = str(e)
-        # Fallback mechanism if YouTube blocks standard extraction
-        return jsonify({
-            "error": f"Extraction blocked by YouTube signature rules. Please ensure cookies.txt is updated or try another video. Details: {error_msg}"
-        }), 500
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))

@@ -18,20 +18,24 @@ def extract_video():
     if not video_url:
         return jsonify({"error": "URL missing"}), 400
 
-    # Clean and robust options to fetch metadata and direct links
     ydl_opts = {
         'quiet': True,
         'no_warnings': True,
         'skip_download': True,
         'extract_flat': False,
-        'format': 'best/bestvideo+bestaudio',
+        # Only fetch formats that have both video and audio combined (No ffmpeg needed)
+        'format': 'best[ext=mp4]/best',
         'extractor_args': {
             'youtube': {
-                'player_client': ['android', 'web']
+                'player_client': ['web', 'tv']
             }
         },
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
     }
+
+    # Optional: If cookies.txt exists in root directory
+    if os.path.exists('cookies.txt'):
+        ydl_opts['cookiefile'] = 'cookies.txt'
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -39,14 +43,25 @@ def extract_video():
             
             formats_data = []
             for fmt in info.get('formats', []):
-                if fmt.get('url'):
+                # Only include streams that have direct URLs and both video + audio
+                if fmt.get('url') and fmt.get('vcodec') != 'none' and fmt.get('acodec') != 'none':
                     formats_data.append({
                         'resolution': fmt.get('format_note') or fmt.get('resolution') or f"{fmt.get('height')}p",
-                        'ext': fmt.get('ext'),
+                        'ext': fmt.get('ext', 'mp4'),
                         'url': fmt.get('url'),
-                        'has_video': fmt.get('vcodec') != 'none',
-                        'has_audio': fmt.get('acodec') != 'none'
+                        'has_video': True,
+                        'has_audio': True
                     })
+
+            # Fallback if filtered list is empty
+            if not formats_data and info.get('url'):
+                formats_data.append({
+                    'resolution': 'HD',
+                    'ext': 'mp4',
+                    'url': info.get('url'),
+                    'has_video': True,
+                    'has_audio': True
+                })
 
             result = {
                 'title': info.get('title'),

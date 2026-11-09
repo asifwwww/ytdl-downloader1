@@ -18,15 +18,21 @@ def extract_video():
     if not video_url:
         return jsonify({"error": "URL missing"}), 400
 
+    # Advanced options to bypass bot detection & JS player challenges
     ydl_opts = {
         'quiet': True,
         'no_warnings': True,
         'skip_download': True,
         'extract_flat': False,
         'format': 'best',
-        # Cookies file path integration to bypass bot detection
         'cookiefile': 'cookies.txt' if os.path.exists('cookies.txt') else None,
-        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        # Extra extractor args to handle recent YouTube updates
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['android', 'web']
+            }
+        }
     }
 
     try:
@@ -58,7 +64,11 @@ def extract_video():
             return jsonify(result), 200
 
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        error_msg = str(e)
+        # Fallback mechanism if YouTube blocks standard extraction
+        return jsonify({
+            "error": f"Extraction blocked by YouTube signature rules. Please ensure cookies.txt is updated or try another video. Details: {error_msg}"
+        }), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))

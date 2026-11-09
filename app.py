@@ -1,9 +1,29 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
+import re
 
 app = Flask(__name__)
 CORS(app)
+
+# Reliable public Invidious instances pool (automatic fallback)
+INVIDIOUS_INSTANCES = [
+    "https://vid.puffyan.us",
+    "https://inv.nadeko.net",
+    "https://invidious.protokolla.fi",
+    "https://yt.artemislena.eu"
+]
+
+def extract_video_id(url):
+    patterns = [
+        r'(?:v=|\/)([0-9A-Za-z_-]{11}).*',
+        r'(?:embed\/|v\/|watch\?v=|youtu\.be\/)([0-9A-Za-z_-]{11})'
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
+    return None
 
 @app.route('/health', methods=['GET'])
 def health():
@@ -17,65 +37,76 @@ def extract_video():
     if not video_url:
         return jsonify({"error": "URL missing"}), 400
 
-    try:
-        # Using a reliable public multi-extractor endpoint
-        api_url = f"https://tikwm.com/api/?url={video_url}"
-        
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-        }
-        
-        response = requests.get(api_url, headers=headers, timeout=25)
-        
-        if not response.text or not response.text.strip():
-            return jsonify({"error": "Server returned empty response."}), 500
+    video_id = extract_video_id(video_url)
+    if not video_id:
+        return jsonify({"error": "Invalid YouTube URL. Could not extract video ID."}), 400
 
+    res_data = None
+    success = False
+
+    # Try instances until one responds successfully
+    for instance in INVIDIOUS_INSTANCES:
         try:
-            res_data = response.json()
-        except Exception:
-            return jsonify({"error": "Failed to parse API response."}), 500
-
-        # Universal fallback extraction formatting for YouTube / Social media
-        if res_data.get("code") == 0 and "data" in res_data:
-            v_data = res_data["data"]
-            formats = []
+            api_url = f"{instance}/api/v1/videos/{video_id}"
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+            response = requests.get(api_url, headers=headers, timeout=12)
             
-            if v_data.get("play"):
+            if response.status_code == 200:
+                res_data = response.json()
+                success = True
+                break
+        except Exception:
+            continue
+
+    if not success or not res_data:
+        return jsonify({"error": "Extraction nodes busy or timed out. Please try again."}), 500
+
+    try:
+        formats = []
+        
+        # Extract combined video + audio streams
+        for fmt in res_data.get('formatStreams', []):
+            if fmt.get('url'):
                 formats.append({
-                    'resolution': 'HD',
-                    'ext': 'mp4',
-                    'url': v_data.get('play'),
+                    'resolution': fmt.get('qualityLabel') or fmt.get('resolution') or 'HD',
+                    'ext': fmt.get('container', 'mp4'),
+                    'url': fmt.get('url'),
                     'has_video': True,
                     'has_audio': True
                 })
-            
-            if v_data.get("music"):
+
+        # Extract audio-only streams
+        for fmt in res_data.get('adaptiveFormats', []):
+            if fmt.get('url') and fmt.get('type', '').startswith('audio/'):
                 formats.append({
-                    'resolution': 'Audio (.mp3)',
-                    'ext': 'mp3',
-                    'url': v_data.get('music'),
+                    'resolution': f"Audio ({fmt.get('container', 'm4a')})",
+                    'ext': fmt.get('container', 'm4a'),
+                    'url': fmt.get('url'),
                     'has_video': False,
                     'has_audio': True
                 })
 
-            result = {
-                'title': v_data.get('title', 'Downloaded Media'),
-                'thumbnail': v_data.get('cover', ''),
-                'duration': v_data.get('duration', 0),
-                'channel': v_data.get('author', {}).get('nickname', 'Creator'),
-                'views': v_data.get('play_count', 0),
-                'description': '',
-                'formats': formats
-            }
-            return jsonify(result), 200
-        else:
-            # Fallback to direct cobalt alternative if needed, or return clear error
-            return jsonify({"error": "Could not extract video details from this link. Try another YouTube link."}), 500
+        # Get best resolution thumbnail
+        thumbnails = res_data.get('videoThumbnails', [])
+        thumbnail_url = thumbnails[0]['url'] if thumbnails else ""
+        for thumb in thumbnails:
+            if thumb.get('quality') == 'maxres' or thumb.get('quality') == 'high':
+                thumbnail_url = thumb['url']
+                break
 
-    except requests.exceptions.Timeout:
-        return jsonify({"error": "Request timed out. Please try again."}), 500
+        result = {
+            'title': res_data.get('title', 'YouTube Video'),
+            'thumbnail': thumbnail_url,
+            'duration': res_data.get('lengthSeconds', 0),
+            'channel': res_data.get('author', 'YouTube Creator'),
+            'views': res_data.get('viewCount', 0),
+            'description': res_data.get('description', ''),
+            'formats': formats
+        }
+        return jsonify(result), 200
+
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"error": f"Parsing error: {str(e)}"}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))

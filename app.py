@@ -4,7 +4,7 @@ import yt_dlp
 import os
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS for Cloudflare Frontend
+CORS(app)
 
 @app.route('/health', methods=['GET'])
 def health():
@@ -24,7 +24,8 @@ def extract_video():
         'skip_download': True,
         'extract_flat': False,
         'format': 'best',
-        # User agent emulation to avoid YouTube blocking
+        # Cookies file path integration to bypass bot detection
+        'cookiefile': 'cookies.txt' if os.path.exists('cookies.txt') else None,
         'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     }
 
@@ -32,10 +33,8 @@ def extract_video():
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(video_url, download=False)
             
-            # Formats Filter (Video + Audio combined & standalone streams)
             formats_data = []
             for fmt in info.get('formats', []):
-                # Filter useful streams with direct URLs
                 if fmt.get('url'):
                     formats_data.append({
                         'format_id': fmt.get('format_id'),

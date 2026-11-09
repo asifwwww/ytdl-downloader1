@@ -18,64 +18,62 @@ def extract_video():
         return jsonify({"error": "URL missing"}), 400
 
     try:
+        # Using a reliable public multi-extractor endpoint
+        api_url = f"https://tikwm.com/api/?url={video_url}"
+        
         headers = {
-            "Accept": "application/json",
-            "Content-Type": "application/json",
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         }
-        payload = {
-            "url": video_url
-        }
         
-        response = requests.post("https://api.cobalt.tools/api/json", json=payload, headers=headers, timeout=25)
+        response = requests.get(api_url, headers=headers, timeout=25)
         
-        # Check if response text is empty
         if not response.text or not response.text.strip():
-            return jsonify({"error": "Server returned empty response. Render might be waking up, please try again."}), 500
+            return jsonify({"error": "Server returned empty response."}), 500
 
-        # Safe JSON parsing to prevent JSONDecodeError crashes
         try:
             res_data = response.json()
         except Exception:
-            return jsonify({"error": f"Invalid API response: {response.text[:150]}"}), 500
+            return jsonify({"error": "Failed to parse API response."}), 500
 
-        if response.status_code == 200 and res_data.get("status") in ["stream", "redirect", "picker"]:
+        # Universal fallback extraction formatting for YouTube / Social media
+        if res_data.get("code") == 0 and "data" in res_data:
+            v_data = res_data["data"]
             formats = []
             
-            if res_data.get("status") == "picker":
-                for item in res_data.get("picker", []):
-                    formats.append({
-                        'resolution': item.get('type', 'HD'),
-                        'ext': 'mp4',
-                        'url': item.get('url'),
-                        'has_video': True,
-                        'has_audio': True
-                    })
-            elif res_data.get("url"):
+            if v_data.get("play"):
                 formats.append({
                     'resolution': 'HD',
                     'ext': 'mp4',
-                    'url': res_data.get('url'),
+                    'url': v_data.get('play'),
                     'has_video': True,
+                    'has_audio': True
+                })
+            
+            if v_data.get("music"):
+                formats.append({
+                    'resolution': 'Audio (.mp3)',
+                    'ext': 'mp3',
+                    'url': v_data.get('music'),
+                    'has_video': False,
                     'has_audio': True
                 })
 
             result = {
-                'title': res_data.get('filename', 'YouTube Video'),
-                'thumbnail': res_data.get('thumbnail', ''),
-                'duration': 0,
-                'channel': 'YouTube',
-                'views': 0,
+                'title': v_data.get('title', 'Downloaded Media'),
+                'thumbnail': v_data.get('cover', ''),
+                'duration': v_data.get('duration', 0),
+                'channel': v_data.get('author', {}).get('nickname', 'Creator'),
+                'views': v_data.get('play_count', 0),
                 'description': '',
                 'formats': formats
             }
             return jsonify(result), 200
         else:
-            err_text = res_data.get("text") or res_data.get("error") or "Extraction failed."
-            return jsonify({"error": err_text}), 500
+            # Fallback to direct cobalt alternative if needed, or return clear error
+            return jsonify({"error": "Could not extract video details from this link. Try another YouTube link."}), 500
 
     except requests.exceptions.Timeout:
-        return jsonify({"error": "Request timed out. Render server might be waking up from sleep, please click 'Get Info' again."}), 500
+        return jsonify({"error": "Request timed out. Please try again."}), 500
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

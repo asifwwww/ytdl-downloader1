@@ -18,7 +18,6 @@ def extract_video():
         return jsonify({"error": "URL missing"}), 400
 
     try:
-        # High-speed reliable extraction bridge request
         headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
@@ -28,13 +27,21 @@ def extract_video():
             "url": video_url
         }
         
-        response = requests.post("https://api.cobalt.tools/api/json", json=payload, headers=headers, timeout=20)
-        res_data = response.json()
+        response = requests.post("https://api.cobalt.tools/api/json", json=payload, headers=headers, timeout=25)
+        
+        # Check if response text is empty
+        if not response.text or not response.text.strip():
+            return jsonify({"error": "Server returned empty response. Render might be waking up, please try again."}), 500
+
+        # Safe JSON parsing to prevent JSONDecodeError crashes
+        try:
+            res_data = response.json()
+        except Exception:
+            return jsonify({"error": f"Invalid API response: {response.text[:150]}"}), 500
 
         if response.status_code == 200 and res_data.get("status") in ["stream", "redirect", "picker"]:
             formats = []
             
-            # Handle multiple qualities / picker options
             if res_data.get("status") == "picker":
                 for item in res_data.get("picker", []):
                     formats.append({
@@ -67,6 +74,8 @@ def extract_video():
             err_text = res_data.get("text") or res_data.get("error") or "Extraction failed."
             return jsonify({"error": err_text}), 500
 
+    except requests.exceptions.Timeout:
+        return jsonify({"error": "Request timed out. Render server might be waking up from sleep, please click 'Get Info' again."}), 500
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
